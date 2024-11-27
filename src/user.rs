@@ -5,7 +5,7 @@ use reqwest::{
 };
 
 use futures_util::TryStreamExt;
-use snafu::{OptionExt, ResultExt, Snafu};
+use snafu::prelude::*;
 use std::{
     io,
     path::{Path, PathBuf},
@@ -41,6 +41,8 @@ pub enum UserError {
     ErrorCode { source: reqwest::Error },
     #[snafu(display("Fails to read file `{}`", file.display()))]
     ReadFile { file: PathBuf, source: io::Error },
+    #[snafu(display("Slug({slug}) given can not be found in user profile"))]
+    InvalidSlug { slug: String },
 
     #[snafu(display("Downloaded html file is not valid"))]
     InvalidHtml { source: AuthenticationError },
@@ -143,19 +145,29 @@ impl User {
             .context(NotATextSnafu)
     }
 
-    pub async fn upload_to_album(&self, album: Album, slug: String) -> Result<(), UserError> {
+    pub async fn upload_to_album(&self, album: &Album, slug: &str) -> Result<(), UserError> {
         let user_hash = self.get_user_hash().await?;
 
-        let short = album.url.path();
+        let short = album.url.path_segments().unwrap().nth(1).unwrap();
 
         println!("Album short: {short}");
 
+        ensure!(
+            self.fetch_uploaded_files()
+                .await?
+                .into_iter()
+                .any(|x| &x.path()[1..] == slug),
+            InvalidSlugSnafu { slug }
+        );
+
         self.client
             .post(API_URL)
-            .header("reqtype", "addtoalbum")
-            .header("userhash", user_hash)
-            .header("short", short)
-            .header("files", &slug)
+            .form(&[
+                ("reqtype", "addtoalbum"),
+                ("userhash", &user_hash),
+                ("short", short),
+                ("files", slug),
+            ])
             .send()
             .await
             .context(RequestSnafu { url: API_URL })?
@@ -253,7 +265,7 @@ impl User {
     /// let user = User::new("kyle", "some_password");
     /// let albums = user.fetch_uploaded_files(&self).await?;
     /// ```
-    pub async fn fetch_uploaded_files(&self) -> Result<Vec<String>, UserError> {
+    pub async fn fetch_uploaded_files(&self) -> Result<Vec<Url>, UserError> {
         const USER_VIEW_URL: &str = "https://catbox.moe/user/view.php";
 
         let html = self
@@ -278,7 +290,7 @@ impl User {
             .filter_map(|x| x.as_tag())
             .filter(|x| x.attributes().contains("target"))
             .filter_map(|x| x.attributes().get("href")??.try_as_utf8_str())
-            .map(ToString::to_string)
+            .filter_map(|x| Url::parse(x).ok())
             .collect();
         Ok(videos)
     }

@@ -16,12 +16,13 @@ async fn main() -> color_eyre::Result<()> {
     }
 
     for (i, x) in user.fetch_albums().await?.into_iter().enumerate() {
+        user.upload_to_album(&x, "6r38xu.pdf").await?;
         println!("album {}: {}", i + 1, x.url);
     }
 
     println!("{}", user.get_user_hash().await?);
 
-    println!("url: {}", user.upload_file("./ocean.mp4").await?);
+    // println!("url: {}", user.upload_file("./ocean.mp4").await?);
 
     Ok(())
 }
