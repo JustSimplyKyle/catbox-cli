@@ -1,0 +1,17 @@
+[package]
+name = "random_catbox"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = "4.5.21"
+tl = "0.7.8"
+# tokio = { version = "1.41.1", features = ["macros", "rt-multi-thread"] }
+reqwest = { version = "0.12.9", features = ["native-tls", "rustls-tls-native-roots", "cookies", "multipart", "stream"] }
+tokio = { version = "1.41.1", features = ["macros", "rt-multi-thread", "fs"] }
+rand = "0.8.5"
+snafu = "0.8.5"
+color-eyre = "0.6.3"
+futures-util = "0.3.31"
+tokio-util = { version = "0.7.12", fetures = ["codec"] }
+indicatif = "0.17.9"
