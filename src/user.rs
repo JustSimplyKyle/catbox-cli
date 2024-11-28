@@ -1,4 +1,4 @@
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::{
     multipart::{self, Part},
     Body, Url,
@@ -9,6 +9,7 @@ use snafu::prelude::*;
 use std::{
     io,
     path::{Path, PathBuf},
+    time::Duration,
 };
 use tokio::{fs::File, sync::OnceCell};
 
@@ -20,6 +21,7 @@ use crate::{
     authentication::{AuthenticatedClient, AuthenticationError},
 };
 
+#[derive(Clone)]
 pub struct User {
     client: AuthenticatedClient,
     user_hash: OnceCell<String>,
@@ -59,6 +61,9 @@ pub enum UserError {
     LackOfChildren,
     #[snafu(display("Fails to parse html. Reason: Lack of user hash"))]
     LackOfUserHash,
+
+    #[snafu(display("Fails to parse a short from url: {url}"))]
+    ShortParsing { url: Url },
 }
 
 const API_URL: &str = "https://catbox.moe/user/api.php";
@@ -91,7 +96,11 @@ impl User {
     /// let user = User::new("kyle", "some_password");
     /// user.upload_file("./happy.mp4").await?;
     /// ```
-    pub async fn upload_file(&self, path: impl AsRef<Path> + Send) -> Result<String, UserError> {
+    pub async fn upload_file(
+        &self,
+        path: impl AsRef<Path> + Send,
+        multi_progress: MultiProgress,
+    ) -> Result<String, UserError> {
         let path = path.as_ref();
 
         let file = File::open(path)
@@ -104,17 +113,24 @@ impl User {
             .context(ReadFileSnafu { file: path })?
             .len();
 
-        let bar = ProgressBar::new(total_bytes);
+        let bar = ProgressBar::new(total_bytes).with_prefix(path.to_string_lossy().to_string());
+
         bar.set_style(
             ProgressStyle::with_template(
-                "[{decimal_bytes_per_sec:}] [{elapsed_precise}] {wide_bar:.cyan/blue} {decimal_bytes}/{decimal_total_bytes} ETA: {eta}",
+                "{prefix:.magenta}\n[ETA: {eta}] [{decimal_bytes_per_sec:}] [{elapsed_precise}] {wide_bar:.cyan/blue} {decimal_bytes}/{decimal_total_bytes}",
             )
             .expect("Invalid template(compile time issue)")
             .progress_chars("##-"),
         );
 
+        multi_progress.add(bar.clone());
+
+        bar.enable_steady_tick(Duration::from_millis(500));
+
+        let bar_cloned = bar.clone();
+
         let stream = FramedRead::new(file, BytesCodec::new()).inspect_ok(move |x| {
-            bar.inc(x.len() as u64);
+            bar_cloned.inc(x.len() as u64);
         });
 
         let body_stream = Body::wrap_stream(stream);
@@ -130,7 +146,8 @@ impl User {
                     .file_name(path.to_string_lossy().to_string()),
             );
 
-        self.client
+        let resp = self
+            .client
             .post(API_URL)
             .multipart(form)
             .send()
@@ -142,15 +159,27 @@ impl User {
             .context(ErrorCodeSnafu)?
             .text()
             .await
-            .context(NotATextSnafu)
+            .context(NotATextSnafu)?;
+
+        bar.finish_and_clear();
+        Ok(resp)
     }
 
     pub async fn upload_to_album(&self, album: &Album, slug: &str) -> Result<(), UserError> {
         let user_hash = self.get_user_hash().await?;
 
-        let short = album.url.path_segments().unwrap().nth(1).unwrap();
+        let short = album
+            .url
+            .path_segments()
+            .context(ShortParsingSnafu {
+                url: album.url.clone(),
+            })?
+            .nth(1)
+            .context(ShortParsingSnafu {
+                url: album.url.clone(),
+            })?;
 
-        println!("Album short: {short}");
+        println!("Album short id: {short}");
 
         ensure!(
             self.fetch_uploaded_files()

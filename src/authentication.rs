@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref};
+use std::ops::Deref;
 
 use reqwest::Client;
 use snafu::{ResultExt, Snafu};
@@ -17,6 +17,7 @@ pub enum AuthenticationError {
     ErrorCode { source: reqwest::Error },
 }
 
+#[derive(Clone)]
 pub struct AuthenticatedClient {
     client: Client,
 }
@@ -34,11 +35,10 @@ impl AuthenticatedClient {
         const LOGIN_URL: &str = "https://catbox.moe/user/dologin.php";
 
         let client = create_spoof_client(None).context(ClientCreationSnafu)?;
-        let params = HashMap::from([("username", username), ("password", password)]);
 
         client
             .post(LOGIN_URL)
-            .form(&params)
+            .form(&[("username", username), ("password", password)])
             .send()
             .await
             .context(RequestSnafu { url: LOGIN_URL })?
