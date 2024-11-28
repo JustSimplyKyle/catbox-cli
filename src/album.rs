@@ -32,14 +32,14 @@ pub enum AlbumError {
     NotAText { source: reqwest::Error },
 }
 
-pub struct Videos {
-    pub urls: Vec<String>,
+pub struct Files {
+    pub urls: Vec<Url>,
 }
 
-impl Videos {
-    pub fn random_video(&self) -> Option<&str> {
+impl Files {
+    pub fn random_file(&self) -> Option<&str> {
         let mut rng = thread_rng();
-        self.urls.choose(&mut rng).map(String::as_str)
+        self.urls.choose(&mut rng).map(|x| x.as_str())
     }
 }
 
@@ -67,7 +67,7 @@ impl Album {
     /// This function sends an HTTP GET request to the album's URL, parses the
     /// HTML response, and extracts the URLs of the videos embedded within the page.
     ///
-    pub async fn fetch_videos(&self) -> Result<Videos, AlbumError> {
+    pub async fn fetch_videos(&self) -> Result<Files, AlbumError> {
         let client = create_spoof_client(None).context(ClientCreationSnafu)?;
         let file = client
             .get(self.url.clone())
@@ -98,11 +98,19 @@ impl Album {
             .all(parser)
             .iter()
             .filter_map(|x| x.as_tag())
-            .map(|x| x.attributes().get("src").context(LackOfSrcSnafu))
+            .map(|x| {
+                let attrs = x.attributes();
+                attrs
+                    .get("src")
+                    .or_else(|| attrs.get("href"))
+                    .context(LackOfSrcSnafu)
+            })
             .filter_map(Result::transpose)
             .map(|x| x?.try_as_utf8_str().context(Utf8IncompatiableSnafu))
-            .map(|x| x.map(ToString::to_string))
+            .map(|x| x.map(|x| Url::parse(x).ok()))
+            .filter(|x| x.as_ref().is_ok_and(Option::is_some))
+            .filter_map(Result::transpose)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(Videos { urls })
+        Ok(Files { urls })
     }
 }
