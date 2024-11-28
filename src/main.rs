@@ -1,86 +1,17 @@
 pub mod album;
 pub(crate) mod authentication;
+mod cli;
 pub(crate) mod network;
 pub mod user;
 
-use std::path::PathBuf;
+use cli::*;
 
 use album::Album;
-use argh::FromArgs;
 use color_eyre::eyre::bail;
 use futures_util::{FutureExt, StreamExt};
 use indicatif::MultiProgress;
 use reqwest::Url;
 use user::User;
-
-#[derive(FromArgs, PartialEq, Debug)]
-/// Top-level command.
-struct Cli {
-    #[argh(subcommand)]
-    command: CliSubCommands,
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-#[argh(subcommand)]
-enum CliSubCommands {
-    File(FileCommand),
-    Album(AlbumCommand),
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-/// Controling files.
-#[argh(subcommand, name = "file")]
-struct FileCommand {
-    #[argh(subcommand)]
-    command: FileSubCommands,
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-#[argh(subcommand)]
-enum FileSubCommands {
-    Upload(FileUpload),
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-/// Uploading files.
-#[argh(subcommand, name = "upload")]
-struct FileUpload {
-    #[argh(positional)]
-    /// file paths
-    paths: Vec<PathBuf>,
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-/// Control your album
-#[argh(subcommand, name = "album")]
-struct AlbumCommand {
-    #[argh(subcommand)]
-    command: AlbumSubCommands,
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-#[argh(subcommand)]
-enum AlbumSubCommands {
-    Fetch(AlbumFetch),
-    List(AlbumList),
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-/// Fetchs the video from desired url.
-#[argh(subcommand, name = "fetch-files")]
-struct AlbumFetch {
-    #[argh(option)]
-    /// the url of said album
-    url: Option<String>,
-    /// the short of said album(the last part of)
-    #[argh(option)]
-    short: Option<String>,
-}
-
-#[derive(FromArgs, PartialEq, Debug)]
-/// Fetchs the video from desired url.
-#[argh(subcommand, name = "list")]
-struct AlbumList {}
 
 /// Album Control
 #[tokio::main]
@@ -148,6 +79,9 @@ async fn main() -> color_eyre::Result<()> {
                 println!("Album {}: {}", i + 1, x.url);
             }
         }
+        CliSubCommands::Config(ConfigCommand {
+            command: ConfigSubCommands::Save(SaveConfig { username, password }),
+        }) => {}
     }
 
     // println!("url: {}", user.upload_file(cli.command).await?);
