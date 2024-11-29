@@ -1,4 +1,5 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use keyring::Entry;
 use reqwest::{
     multipart::{self, Part},
     Body, Url,
@@ -19,6 +20,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use crate::{
     album::Album,
     authentication::{AuthenticatedClient, AuthenticationError},
+    get_password_entry, get_username_entry,
 };
 
 #[derive(Clone)]
@@ -35,6 +37,13 @@ pub enum UserError {
         password: String,
         source: AuthenticationError,
     },
+    #[snafu(display("Fails to initilize keyring instance."))]
+    KeyringInitilization { source: keyring::Error },
+    #[snafu(display("Lack of password, please set one with `cbx config save --password`!"))]
+    LackOfPassword { source: keyring::Error },
+    #[snafu(display("Lack of user, please set one with `cbx config save --username`!"))]
+    LackOfUser { source: keyring::Error },
+
     #[snafu(display("Request to target failed. url: '{url}'"))]
     Request { url: String, source: reqwest::Error },
     #[snafu(display("Return to response can't be parsed as text"))]
@@ -57,7 +66,7 @@ pub enum UserError {
     LackOfNodeid,
     #[snafu(display("Fails to parse html. Reason: Lack of preview container"))]
     LackOfContainer,
-    #[snafu(display("Fails to parse html. Reason: Lack of children from the video container"))]
+    #[snafu(display("Fails to parse html. Reason: Lack of children from the `div` container"))]
     LackOfChildren,
     #[snafu(display("Fails to parse html. Reason: Lack of user hash"))]
     LackOfUserHash,
@@ -78,10 +87,28 @@ impl User {
     /// ```
     /// let user = User::new("kyle", "some_password");
     /// ```
-    pub async fn new(username: &str, password: &str) -> Result<Self, UserError> {
-        let client = AuthenticatedClient::new(username, password)
+    pub async fn new() -> Result<Self, UserError> {
+        let username = get_username_entry()
+            .context(KeyringInitilizationSnafu)?
+            .get_password()
+            .context(LackOfUserSnafu)?;
+        let password = get_password_entry()
+            .context(KeyringInitilizationSnafu)?
+            .get_password()
+            .context(LackOfPasswordSnafu)?;
+
+        let progress = ProgressBar::new_spinner();
+
+        progress.enable_steady_tick(Duration::from_millis(200));
+
+        progress.set_message("Initilizing user...");
+
+        let client = AuthenticatedClient::new(&username, &password)
             .await
             .context(AuthenticatedClientCreationSnafu { username, password })?;
+
+        progress.finish_and_clear();
+
         Ok(Self {
             client,
             user_hash: OnceCell::new(),
@@ -96,6 +123,10 @@ impl User {
     /// let user = User::new("kyle", "some_password");
     /// user.upload_file("./happy.mp4").await?;
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when the template provided to `ProgressBar` is invalid(compile time mistake)
     pub async fn upload_file(
         &self,
         path: impl AsRef<Path> + Send,
@@ -307,7 +338,7 @@ impl User {
             tl::parse(&html, ParserOptions::default()).context(HtmlParseSnafu { html: &html })?;
         let parser = html.parser();
 
-        let videos = html
+        let files = html
             .get_element_by_id("results")
             .context(LackOfContainerSnafu)?
             .get(parser)
@@ -321,6 +352,6 @@ impl User {
             .filter_map(|x| x.attributes().get("href")??.try_as_utf8_str())
             .filter_map(|x| Url::parse(x).ok())
             .collect();
-        Ok(videos)
+        Ok(files)
     }
 }

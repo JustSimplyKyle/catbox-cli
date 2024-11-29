@@ -1,7 +1,11 @@
 [package]
-name = "cbx"
+name = "catbox-cli"
 version = "0.1.0"
 edition = "2021"
+
+[[bin]]
+name = "cbx"
+path = "./src/main.rs"
 
 [dependencies]
 tl = "0.7.8"
@@ -15,3 +19,4 @@ futures-util = "0.3.31"
 tokio-util =  "0.7.12" 
 indicatif = "0.17.9"
 argh = "0.1.12"
+keyring = { version = "3.6.1", features = ["apple-native", "windows-native", "sync-secret-service"] }

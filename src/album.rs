@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use indicatif::ProgressBar;
 use rand::{seq::SliceRandom, thread_rng};
 use reqwest::Url;
 use snafu::{OptionExt, ResultExt, Snafu};
@@ -20,11 +23,11 @@ pub enum AlbumError {
     },
     #[snafu(display("Fails to parse html. Reason: Lack of node id from vdom(impossible!)"))]
     LackOfNodeid,
-    #[snafu(display("Fails to parse html. Reason: Lack of video container"))]
-    LackOfVideoContainer,
-    #[snafu(display("Fails to parse html. Reason: Lack of children from the video container"))]
+    #[snafu(display("Fails to parse html. Reason: Lack of `div` container"))]
+    LackOfContainer,
+    #[snafu(display("Fails to parse html. Reason: Lack of children from the `div` container"))]
     LackOfChildren,
-    #[snafu(display("Fails to parse html. Reason: Lack of `src` from the video element"))]
+    #[snafu(display("Fails to parse html. Reason: Lack of `src` from the `div` element"))]
     LackOfSrc,
     #[snafu(display("Fails to parse html. Reason: `src` string is not utf8 compatiable"))]
     Utf8Incompatiable,
@@ -39,7 +42,7 @@ pub struct Files {
 impl Files {
     pub fn random_file(&self) -> Option<&str> {
         let mut rng = thread_rng();
-        self.urls.choose(&mut rng).map(|x| x.as_str())
+        self.urls.choose(&mut rng).map(Url::as_str)
     }
 }
 
@@ -62,13 +65,17 @@ impl Album {
         Self { url: url.into() }
     }
 
-    /// Fetches the video URLs from the album's webpage.
+    /// Fetches the the URLs from the album's webpage.
     ///
     /// This function sends an HTTP GET request to the album's URL, parses the
-    /// HTML response, and extracts the URLs of the videos embedded within the page.
+    /// HTML response, and extracts the URLs of the files embedded within the page.
     ///
-    pub async fn fetch_videos(&self) -> Result<Files, AlbumError> {
+    pub async fn fetch_files(&self) -> Result<Files, AlbumError> {
         let client = create_spoof_client(None).context(ClientCreationSnafu)?;
+
+        let pb = ProgressBar::new_spinner().with_message("Downloading data...");
+        pb.enable_steady_tick(Duration::from_millis(100));
+
         let file = client
             .get(self.url.clone())
             .send()
@@ -82,6 +89,8 @@ impl Album {
             .await
             .context(NotATextSnafu)?;
 
+        pb.finish_and_clear();
+
         let html =
             tl::parse(&file, ParserOptions::default()).context(HtmlParseSnafu { html: &file })?;
 
@@ -90,7 +99,7 @@ impl Album {
         let urls = html
             .get_elements_by_class_name("imagecontainer")
             .next()
-            .context(LackOfVideoContainerSnafu)?
+            .context(LackOfContainerSnafu)?
             .get(parser)
             .context(LackOfNodeidSnafu)?
             .children()

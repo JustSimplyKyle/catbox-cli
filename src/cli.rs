@@ -34,7 +34,7 @@ pub enum ConfigSubCommands {
 }
 
 #[derive(FromArgs, PartialEq, Eq, Debug)]
-/// Fetchs the video from desired url.
+/// Saves your account username and password.
 #[argh(subcommand, name = "save")]
 pub struct SaveConfig {
     #[argh(option)]
@@ -72,7 +72,7 @@ pub struct FileUpload {
 }
 
 // <--------------------------------->
-// Ablum Commands <------------------>
+// Album Commands <------------------>
 #[derive(FromArgs, PartialEq, Eq, Debug)]
 /// Control your album
 #[argh(subcommand, name = "album")]
@@ -86,11 +86,21 @@ pub struct AlbumCommand {
 pub enum AlbumSubCommands {
     Fetch(AlbumFetch),
     List(AlbumList),
+    Add(AddFiles),
 }
 
 #[derive(FromArgs, PartialEq, Eq, Debug)]
-/// Fetchs the video from desired url.
-#[argh(subcommand, name = "fetch-files")]
+/// Uploading files via their short ids(allows url input).
+#[argh(subcommand, name = "add")]
+pub struct AddFiles {
+    #[argh(positional)]
+    /// files to add to album
+    pub files: Vec<String>,
+}
+
+#[derive(FromArgs, PartialEq, Eq, Debug)]
+/// Fetchs the files from desired url.
+#[argh(subcommand, name = "list-files")]
 pub struct AlbumFetch {
     #[argh(option)]
     /// the url of said album
