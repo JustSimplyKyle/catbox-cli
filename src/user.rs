@@ -210,8 +210,6 @@ impl User {
                 url: album.url.clone(),
             })?;
 
-        println!("Album short id: {short}");
-
         ensure!(
             self.fetch_uploaded_files()
                 .await?

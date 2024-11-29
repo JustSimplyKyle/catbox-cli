@@ -93,6 +93,9 @@ pub enum AlbumSubCommands {
 /// Uploading files via their short ids(allows url input).
 #[argh(subcommand, name = "add")]
 pub struct AddFiles {
+    /// the short of said album(the last part of)
+    #[argh(option)]
+    pub short: String,
     #[argh(positional)]
     /// files to add to album
     pub files: Vec<String>,

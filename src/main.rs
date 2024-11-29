@@ -4,15 +4,17 @@ mod cli;
 pub(crate) mod network;
 pub mod user;
 
+use std::time::Duration;
+
 use cli::*;
 
 use album::Album;
 use color_eyre::eyre::bail;
-use futures_util::{FutureExt, StreamExt};
-use indicatif::MultiProgress;
+use futures_util::{FutureExt, StreamExt, TryStreamExt};
+use indicatif::{MultiProgress, ProgressBar};
 use keyring::Entry;
 use reqwest::Url;
-use user::User;
+use user::{User, UserError};
 
 fn get_username_entry() -> keyring::Result<Entry> {
     Entry::new("catbox-cli", "username")
@@ -78,6 +80,40 @@ async fn main() -> color_eyre::Result<()> {
             }
         }
         CliSubCommands::Album(AlbumCommand {
+            command: AlbumSubCommands::Add(AddFiles { short, files }),
+        }) => {
+            let user = User::new().await?;
+            let album = Album::new(Url::parse(&format!("https://catbox.moe/c/{short}"))?);
+
+            futures_util::stream::iter(files.into_iter().filter_map(|x| {
+                if x.contains("files.catbox.moe") {
+                    Some(Url::parse(&x).ok()?.path_segments()?.nth(1)?[1..].to_string())
+                } else {
+                    Some(x)
+                }
+            }))
+            .map(move |x| {
+                let value = user.clone();
+                let album = album.clone();
+                let pb = ProgressBar::new_spinner();
+                m.add(pb.clone());
+
+                pb.enable_steady_tick(Duration::from_millis(100));
+
+                pb.set_message(format!("Uploading '{x}' to album"));
+
+                async move {
+                    value.upload_to_album(&album, &x).await?;
+
+                    pb.finish_and_clear();
+                    Ok::<_, UserError>(())
+                }
+            })
+            .buffer_unordered(5)
+            .try_collect::<Vec<_>>()
+            .await?;
+        }
+        CliSubCommands::Album(AlbumCommand {
             command: AlbumSubCommands::List(AlbumList {}),
         }) => {
             let user = User::new().await?;
@@ -93,19 +129,6 @@ async fn main() -> color_eyre::Result<()> {
             get_password_entry()?.set_password(&password)?;
         }
     }
-
-    // println!("url: {}", user.upload_file(cli.command).await?);
-
-    // for (i, x) in user.fetch_uploaded_files().await?.into_iter().enumerate() {
-    //     println!("file {}: {x}", i + 1);
-    // }
-
-    // for (i, x) in user.fetch_albums().await?.into_iter().enumerate() {
-    //     user.upload_to_album(&x, "6r38xu.pdf").await?;
-    //     println!("album {}: {}", i + 1, x.url);
-    // }
-
-    // println!("{}", user.get_user_hash().await?);
 
     Ok(())
 }
