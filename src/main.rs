@@ -24,7 +24,8 @@ fn get_password_entry() -> keyring::Result<Entry> {
     Entry::new("catbox-cli", "password")
 }
 
-struct UserInstance {
+#[derive(Default)]
+pub struct UserInstance {
     cache: OnceCell<User>,
 }
 
@@ -39,6 +40,74 @@ impl UserInstance {
     }
 }
 
+pub async fn upload_files(
+    m: MultiProgress,
+    user_instance: Arc<UserInstance>,
+    paths: impl AsRef<[PathBuf]> + Send,
+) -> color_eyre::Result<Vec<String>> {
+    let user = user_instance.get().await?;
+
+    futures_util::stream::iter(paths.as_ref())
+        .map(|x| {
+            user.upload_file(x.clone(), m.clone())
+                .map(move |y| Ok::<_, color_eyre::Report>((x, y?)))
+        })
+        .buffer_unordered(5)
+        .map(|x| {
+            let (path, url) = x?;
+            m.println(format!("{}: {url}", path.display()))?;
+            Ok(url)
+        })
+        .try_collect::<Vec<_>>()
+        .await
+}
+
+pub async fn add_to_album(
+    m: MultiProgress,
+    user_instance: Arc<UserInstance>,
+    album: String,
+    files: Vec<String>,
+) -> color_eyre::Result<()> {
+    let user = user_instance.get().await?;
+
+    let album = {
+        if album.contains("catbox.moe") {
+            Album::new(Url::parse(&album)?)
+        } else {
+            Album::new(Url::parse(&format!("https://catbox.moe/c/{album}"))?)
+        }
+    };
+
+    futures_util::stream::iter(files.into_iter().filter_map(|x| {
+        if x.contains("files.catbox.moe") {
+            Some(Url::parse(&x).ok()?.path_segments()?.next()?.to_owned())
+        } else {
+            Some(x)
+        }
+    }))
+    .map(move |x| {
+        let user = user.clone();
+        let album = album.clone();
+        let pb = ProgressBar::new_spinner();
+        m.add(pb.clone());
+
+        pb.enable_steady_tick(Duration::from_millis(100));
+
+        pb.set_message(format!("Uploading '{x}' to album"));
+
+        async move {
+            user.upload_to_album(&album, &x).await?;
+
+            pb.finish_and_clear();
+            Ok::<_, UserError>(())
+        }
+    })
+    .buffer_unordered(5)
+    .try_collect::<Vec<_>>()
+    .await?;
+    Ok(())
+}
+
 /// Album Control
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -51,81 +120,26 @@ async fn main() -> color_eyre::Result<()> {
 
     let user_instance = Arc::new(UserInstance::new());
 
-    let upload_files = |paths: Vec<PathBuf>| {
-        let m = m.clone();
-        let user_instance = user_instance.clone();
-        async move {
-            let user = user_instance.get().await?;
-
-            futures_util::stream::iter(paths)
-                .map(|x| {
-                    user.upload_file(x.clone(), m.clone())
-                        .map(move |y| Ok::<_, color_eyre::Report>((x, y?)))
-                })
-                .buffer_unordered(5)
-                .inspect_ok(|(path, url)| {
-                    m.println(format!("{}: {url}", path.display()))
-                        .expect("Can't print using indicaitf");
-                })
-                .map_ok(|x| x.1)
-                .try_collect::<Vec<_>>()
-                .await
-        }
-    };
-
-    let add_to_album = |album: String, files: Vec<String>| {
-        let m = m.clone();
-        let user_instance = user_instance.clone();
-        async move {
-            let user = user_instance.get().await?;
-
-            let album = {
-                if album.contains("catbox.moe") {
-                    Album::new(Url::parse(&album)?)
-                } else {
-                    Album::new(Url::parse(&format!("https://catbox.moe/c/{album}"))?)
-                }
-            };
-
-            futures_util::stream::iter(files.into_iter().filter_map(|x| {
-                if x.contains("files.catbox.moe") {
-                    Some(Url::parse(&x).ok()?.path_segments()?.next()?.to_owned())
-                } else {
-                    Some(x)
-                }
-            }))
-            .map(move |x| {
-                let user = user.clone();
-                let album = album.clone();
-                let pb = ProgressBar::new_spinner();
-                m.add(pb.clone());
-
-                pb.enable_steady_tick(Duration::from_millis(100));
-
-                pb.set_message(format!("Uploading '{x}' to album"));
-
-                async move {
-                    user.upload_to_album(&album, &x).await?;
-
-                    pb.finish_and_clear();
-                    Ok::<_, UserError>(())
-                }
-            })
-            .buffer_unordered(5)
-            .try_collect::<Vec<_>>()
-            .await?;
-            Ok::<_, color_eyre::Report>(())
-        }
-    };
-
     match cli.command {
         CliSubCommands::File(FileCommand {
             command: FileSubCommands::Upload(FileUpload { paths }),
         }) => {
-            upload_files(paths).await?;
+            upload_files(m, user_instance, paths).await?;
         }
         CliSubCommands::Album(AlbumCommand {
-            command: AlbumSubCommands::Fetch(AlbumFetch { album }),
+            command: AlbumSubCommands::Add(AddFiles { album, files }),
+        }) => {
+            add_to_album(m, user_instance, album, files).await?;
+        }
+        CliSubCommands::Album(AlbumCommand {
+            command: AlbumSubCommands::Upload(UploadFiles { album, files }),
+        }) => {
+            let urls = upload_files(m.clone(), user_instance.clone(), files).await?;
+
+            add_to_album(m, user_instance, album, urls).await?;
+        }
+        CliSubCommands::Album(AlbumCommand {
+            command: AlbumSubCommands::List(AlbumList { album: Some(album) }),
         }) => {
             let album = {
                 if album.contains("catbox.moe") {
@@ -147,19 +161,7 @@ async fn main() -> color_eyre::Result<()> {
             }
         }
         CliSubCommands::Album(AlbumCommand {
-            command: AlbumSubCommands::Add(AddFiles { album, files }),
-        }) => {
-            add_to_album(album, files).await?;
-        }
-        CliSubCommands::Album(AlbumCommand {
-            command: AlbumSubCommands::Upload(UploadFiles { album, files }),
-        }) => {
-            let urls = upload_files(files).await?;
-
-            add_to_album(album, urls).await?;
-        }
-        CliSubCommands::Album(AlbumCommand {
-            command: AlbumSubCommands::List(AlbumList {}),
+            command: AlbumSubCommands::List(AlbumList { album: None }),
         }) => {
             let user = user_instance.get().await?;
 

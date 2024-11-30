@@ -89,7 +89,6 @@ pub struct AlbumCommand {
 #[derive(FromArgs, PartialEq, Eq, Debug, Clone)]
 #[argh(subcommand)]
 pub enum AlbumSubCommands {
-    Fetch(AlbumFetch),
     List(AlbumList),
     Add(AddFiles),
     Upload(UploadFiles),
@@ -120,17 +119,13 @@ pub struct UploadFiles {
 }
 
 #[derive(FromArgs, PartialEq, Eq, Debug, Clone)]
-/// Fetchs the files from desired url or short.
-#[argh(subcommand, name = "list-files")]
-pub struct AlbumFetch {
-    /// the short of said album(the last part of the url)
-    #[argh(option)]
-    pub album: String,
-}
-
-#[derive(FromArgs, PartialEq, Eq, Debug, Clone)]
-/// List the album from the logined state.
+/// List all the albums from the logined state.
+/// if the `album` option is given, it will list the files of the album instead
 #[argh(subcommand, name = "list")]
-pub struct AlbumList {}
+pub struct AlbumList {
+    #[argh(option)]
+    /// the short of the album(the last part of the url)
+    pub album: Option<String>,
+}
 
 // <--------------------------------->
