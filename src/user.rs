@@ -4,7 +4,7 @@ use reqwest::{
     Body, StatusCode, Url,
 };
 
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::TryStreamExt;
 use snafu::prelude::*;
 use std::{
     io,

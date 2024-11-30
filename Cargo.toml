@@ -1,12 +1,12 @@
 [package]
 name = "catbox-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A simple catbox cli that has progress when uploading!"
 readme = "./README.md"
 homepage = "https://github.com/JustSimplyKyle/catbox-cli"
 repository = "https://github.com/JustSimplyKyle/catbox-cli"
-categories = [ "cli" ]
+categories = [ "command-line-utilities" ]
 license = "MIT"
 
 [[bin]]
