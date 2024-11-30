@@ -126,6 +126,20 @@ async fn main() -> color_eyre::Result<()> {
         }) => {
             upload_files(m, user_instance, paths).await?;
         }
+        CliSubCommands::File(FileCommand {
+            command: FileSubCommands::List(FileList {}),
+        }) => {
+            let user = user_instance.get().await?;
+            for (i, x) in user
+                .fetch_uploaded_files()
+                .await?
+                .into_iter()
+                .rev()
+                .enumerate()
+            {
+                println!("File {}: {x}", i + 1);
+            }
+        }
         CliSubCommands::Album(AlbumCommand {
             command: AlbumSubCommands::Add(AddFiles { album, files }),
         }) => {

@@ -1,10 +1,10 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use reqwest::{
     multipart::{self, Part},
-    Body, Url,
+    Body, StatusCode, Url,
 };
 
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use snafu::prelude::*;
 use std::{
     io,
@@ -47,8 +47,8 @@ pub enum UserError {
     Request { url: String, source: reqwest::Error },
     #[snafu(display("Return to response can't be parsed as text"))]
     NotAText { source: reqwest::Error },
-    #[snafu(display("Request returns non 200 error code: '{}'", source.status().map(|x| x.as_u16()).unwrap_or_default()))]
-    ErrorCode { source: reqwest::Error },
+    #[snafu(display("Request returns non 200 error code: '{}'!\nserver reason: {reason}", code.as_u16()))]
+    ErrorCode { reason: String, code: StatusCode },
     #[snafu(display("Fails to read file `{}`", file.display()))]
     ReadFile { file: PathBuf, source: io::Error },
     #[snafu(display("Slug({slug}) given can not be found in user profile"))]
@@ -184,15 +184,22 @@ impl User {
             .await
             .context(RequestSnafu {
                 url: path.to_string_lossy(),
-            })?
-            .error_for_status()
-            .context(ErrorCodeSnafu)?
-            .text()
-            .await
-            .context(NotATextSnafu)?;
+            })?;
+
+        let code = resp.status();
+
+        let text = resp.text().await.context(NotATextSnafu)?;
+
+        if !code.is_success() {
+            ErrorCodeSnafu {
+                code,
+                reason: &text,
+            }
+            .fail()?;
+        }
 
         bar.finish_and_clear();
-        Ok(resp)
+        Ok(text)
     }
 
     pub async fn upload_to_album(&self, album: &Album, slug: &str) -> Result<(), UserError> {
@@ -217,7 +224,8 @@ impl User {
             InvalidSlugSnafu { slug }
         );
 
-        self.client
+        let resp = self
+            .client
             .post(API_URL)
             .form(&[
                 ("reqtype", "addtoalbum"),
@@ -227,9 +235,17 @@ impl User {
             ])
             .send()
             .await
-            .context(RequestSnafu { url: API_URL })?
-            .error_for_status()
-            .context(ErrorCodeSnafu)?;
+            .context(RequestSnafu { url: API_URL })?;
+
+        let code = resp.status();
+
+        if !code.is_success() {
+            ErrorCodeSnafu {
+                code,
+                reason: resp.text().await.context(NotATextSnafu)?,
+            }
+            .fail()?;
+        }
         Ok(())
     }
 

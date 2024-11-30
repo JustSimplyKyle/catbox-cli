@@ -65,7 +65,12 @@ pub struct FileCommand {
 #[argh(subcommand)]
 pub enum FileSubCommands {
     Upload(FileUpload),
+    List(FileList),
 }
+#[derive(FromArgs, PartialEq, Eq, Debug, Clone)]
+/// Uploading files.
+#[argh(subcommand, name = "list")]
+pub struct FileList {}
 
 #[derive(FromArgs, PartialEq, Eq, Debug, Clone)]
 /// Uploading files.
