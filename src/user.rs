@@ -1,5 +1,4 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use keyring::Entry;
 use reqwest::{
     multipart::{self, Part},
     Body, Url,
