@@ -4,7 +4,11 @@ mod cli;
 pub(crate) mod network;
 pub mod user;
 
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use cli::*;
 
@@ -24,6 +28,11 @@ fn get_password_entry() -> keyring::Result<Entry> {
     Entry::new("catbox-cli", "password")
 }
 
+pub static USER_INSTANCE: LazyLock<Arc<UserInstance>> =
+    LazyLock::new(|| Arc::new(UserInstance::new()));
+
+pub static MULTI_PROGRESS: LazyLock<MultiProgress> = LazyLock::new(MultiProgress::new);
+
 #[derive(Default)]
 pub struct UserInstance {
     cache: OnceCell<User>,
@@ -40,35 +49,26 @@ impl UserInstance {
     }
 }
 
-pub async fn upload_files(
-    m: MultiProgress,
-    user_instance: Arc<UserInstance>,
-    paths: impl AsRef<[PathBuf]> + Send,
-) -> color_eyre::Result<Vec<String>> {
-    let user = user_instance.get().await?;
+pub async fn upload_files(paths: impl AsRef<[PathBuf]> + Send) -> color_eyre::Result<Vec<String>> {
+    let user = USER_INSTANCE.get().await?;
 
     futures_util::stream::iter(paths.as_ref())
         .map(|x| {
-            user.upload_file(x.clone(), m.clone())
+            user.upload_file(x.clone())
                 .map(move |y| Ok::<_, color_eyre::Report>((x, y?)))
         })
         .buffer_unordered(5)
         .map(|x| {
             let (path, url) = x?;
-            m.println(format!("{}: {url}", path.display()))?;
+            MULTI_PROGRESS.println(format!("{}: {url}", path.display()))?;
             Ok(url)
         })
         .try_collect::<Vec<_>>()
         .await
 }
 
-pub async fn add_to_album(
-    m: MultiProgress,
-    user_instance: Arc<UserInstance>,
-    album: String,
-    files: Vec<String>,
-) -> color_eyre::Result<()> {
-    let user = user_instance.get().await?;
+pub async fn add_to_album(album: String, files: Vec<String>) -> color_eyre::Result<()> {
+    let user = USER_INSTANCE.get().await?;
 
     let album = {
         if album.contains("catbox.moe") {
@@ -86,20 +86,21 @@ pub async fn add_to_album(
         }
     }))
     .map(move |x| {
-        let user = user.clone();
         let album = album.clone();
+
         let pb = ProgressBar::new_spinner();
-        m.add(pb.clone());
+        MULTI_PROGRESS.add(pb.clone());
 
         pb.enable_steady_tick(Duration::from_millis(100));
 
         pb.set_message(format!("Uploading '{x}' to album"));
 
         async move {
-            user.upload_to_album(&album, &x).await?;
+            let x = user.upload_to_album(&album, &x).await;
 
             pb.finish_and_clear();
-            Ok::<_, UserError>(())
+
+            x
         }
     })
     .buffer_unordered(5)
@@ -107,7 +108,6 @@ pub async fn add_to_album(
     .await?;
     Ok(())
 }
-
 /// Album Control
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
@@ -116,20 +116,16 @@ async fn main() -> color_eyre::Result<()> {
 
     let cli: Cli = argh::from_env();
 
-    let m = MultiProgress::new();
-
-    let user_instance = Arc::new(UserInstance::new());
-
     match cli.command {
         CliSubCommands::File(FileCommand {
             command: FileSubCommands::Upload(FileUpload { paths }),
         }) => {
-            upload_files(m, user_instance, paths).await?;
+            upload_files(paths).await?;
         }
         CliSubCommands::File(FileCommand {
             command: FileSubCommands::List(FileList {}),
         }) => {
-            let user = user_instance.get().await?;
+            let user = USER_INSTANCE.get().await?;
             for (i, x) in user
                 .fetch_uploaded_files()
                 .await?
@@ -143,14 +139,14 @@ async fn main() -> color_eyre::Result<()> {
         CliSubCommands::Album(AlbumCommand {
             command: AlbumSubCommands::Add(AddFiles { album, files }),
         }) => {
-            add_to_album(m, user_instance, album, files).await?;
+            add_to_album(album, files).await?;
         }
         CliSubCommands::Album(AlbumCommand {
             command: AlbumSubCommands::Upload(UploadFiles { album, files }),
         }) => {
-            let urls = upload_files(m.clone(), user_instance.clone(), files).await?;
+            let urls = upload_files(files).await?;
 
-            add_to_album(m, user_instance, album, urls).await?;
+            add_to_album(album, urls).await?;
         }
         CliSubCommands::Album(AlbumCommand {
             command: AlbumSubCommands::List(AlbumList { album: Some(album) }),
@@ -177,7 +173,7 @@ async fn main() -> color_eyre::Result<()> {
         CliSubCommands::Album(AlbumCommand {
             command: AlbumSubCommands::List(AlbumList { album: None }),
         }) => {
-            let user = user_instance.get().await?;
+            let user = USER_INSTANCE.get().await?;
 
             for (i, x) in user.fetch_albums().await?.into_iter().rev().enumerate() {
                 println!("Album {}: {}", i + 1, x.url);

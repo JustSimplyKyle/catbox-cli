@@ -19,7 +19,7 @@ use tokio_util::codec::{BytesCodec, FramedRead};
 use crate::{
     album::Album,
     authentication::{AuthenticatedClient, AuthenticationError},
-    get_password_entry, get_username_entry,
+    get_password_entry, get_username_entry, MULTI_PROGRESS,
 };
 
 #[derive(Clone)]
@@ -126,11 +126,7 @@ impl User {
     /// # Panics
     ///
     /// Panics when the template provided to `ProgressBar` is invalid(compile time mistake)
-    pub async fn upload_file(
-        &self,
-        path: impl AsRef<Path> + Send,
-        multi_progress: MultiProgress,
-    ) -> Result<String, UserError> {
+    pub async fn upload_file(&self, path: impl AsRef<Path> + Send) -> Result<String, UserError> {
         let path = path.as_ref();
 
         let file = File::open(path)
@@ -153,7 +149,7 @@ impl User {
             .progress_chars("##-"),
         );
 
-        multi_progress.add(bar.clone());
+        MULTI_PROGRESS.add(bar.clone());
 
         bar.enable_steady_tick(Duration::from_millis(500));
 
