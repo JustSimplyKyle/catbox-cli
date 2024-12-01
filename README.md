@@ -37,6 +37,12 @@ Listing albums that were created by you is as simple as:
 
 `cbx album list`
 
+## Listing the files in an album
+
+`cbx album list --album [album_id]`
+
+You can get `[album_id]` by `cbx album list`
+
 ## Adding an existing file from `catbox.moe` to an album
 For example, adding `w0v6bk.webm` and `7mc3en.pdf` to album `hpxdlu`:
 
