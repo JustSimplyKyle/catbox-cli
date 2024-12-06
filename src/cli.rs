@@ -7,6 +7,9 @@ use argh::FromArgs;
 pub struct Cli {
     #[argh(subcommand)]
     pub command: CliSubCommands,
+    #[argh(switch, short = 'j')]
+    /// whether to output in json
+    pub json: bool,
 }
 
 #[derive(FromArgs, PartialEq, Eq, Debug, Clone)]

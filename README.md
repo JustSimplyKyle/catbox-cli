@@ -58,3 +58,10 @@ You can accomplish this with `cbx file upload` paired with `cbx album add`, but 
 `catbox-cli` provides the following command to simply uploading to an album:
 
 `cbx album upload [file1] [file2] --album [album_slug]`
+
+## Json Mode
+`cbx` supports listing files with the json format using the flag `-j/--json`
+
+Using `-j` with unsupported command modes would result it doing nothing.
+
+`cbx --json file list`

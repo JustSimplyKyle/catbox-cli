@@ -126,14 +126,14 @@ async fn main() -> color_eyre::Result<()> {
             command: FileSubCommands::List(FileList {}),
         }) => {
             let user = USER_INSTANCE.get().await?;
-            for (i, x) in user
-                .fetch_uploaded_files()
-                .await?
-                .into_iter()
-                .rev()
-                .enumerate()
-            {
-                println!("File {}: {x}", i + 1);
+            let files = user.fetch_uploaded_files().await?;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&files)?);
+            } else {
+                for (i, x) in files.into_iter().rev().enumerate() {
+                    println!("File {}: {x}", i + 1);
+                }
             }
         }
         CliSubCommands::Album(AlbumCommand {
@@ -159,15 +159,14 @@ async fn main() -> color_eyre::Result<()> {
                 }
             };
 
-            for (i, x) in album
-                .fetch_files()
-                .await?
-                .urls
-                .into_iter()
-                .rev()
-                .enumerate()
-            {
-                println!("File {}: {x}", i + 1);
+            let files = album.fetch_files().await?.urls;
+
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&files)?);
+            } else {
+                for (i, x) in files.into_iter().rev().enumerate() {
+                    println!("File {}: {x}", i + 1);
+                }
             }
         }
         CliSubCommands::Album(AlbumCommand {
@@ -175,8 +174,15 @@ async fn main() -> color_eyre::Result<()> {
         }) => {
             let user = USER_INSTANCE.get().await?;
 
-            for (i, x) in user.fetch_albums().await?.into_iter().rev().enumerate() {
-                println!("Album {}: {}", i + 1, x.url);
+            let albums = user.fetch_albums().await?;
+
+            if cli.json {
+                let albums = albums.into_iter().map(|x| x.url).collect::<Vec<_>>();
+                println!("{}", serde_json::to_string_pretty(&albums)?);
+            } else {
+                for (i, x) in user.fetch_albums().await?.into_iter().rev().enumerate() {
+                    println!("Album {}: {}", i + 1, x.url);
+                }
             }
         }
         CliSubCommands::Config(ConfigCommand {

@@ -1,6 +1,6 @@
 [package]
 name = "catbox-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "A simple catbox cli that has progress when uploading!"
 readme = "./README.md"
@@ -26,3 +26,5 @@ tokio-util =  "0.7.12"
 indicatif = "0.17.9"
 argh = "0.1.12"
 keyring = { version = "3.6.1", features = ["apple-native", "windows-native", "sync-secret-service"] }
+serde_json = "1.0.133"
+url = { version = "2.5.4", features = ["serde"] }
