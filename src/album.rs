@@ -1,39 +1,12 @@
+use super::errors::*;
 use std::time::Duration;
 
 use indicatif::ProgressBar;
 use rand::{seq::SliceRandom, thread_rng};
 use reqwest::Url;
-use snafu::{OptionExt, ResultExt, Snafu};
 use tl::ParserOptions;
 
 use crate::network::create_spoof_client;
-
-#[derive(Snafu, Debug)]
-pub enum AlbumError {
-    #[snafu(display("Fails to create reqwest client"))]
-    ClientCreation { source: reqwest::Error },
-    #[snafu(display("Request to target failed. url: '{url}'"))]
-    Request { url: String, source: reqwest::Error },
-    #[snafu(display("Request returns non 200 error code: '{}'", source.status().map(|x| x.as_u16()).unwrap_or_default()))]
-    ErrorCode { source: reqwest::Error },
-    #[snafu(display("Fails to parse html. html: {html}"))]
-    HtmlParse {
-        html: String,
-        source: tl::ParseError,
-    },
-    #[snafu(display("Fails to parse html. Reason: Lack of node id from vdom(impossible!)"))]
-    LackOfNodeid,
-    #[snafu(display("Fails to parse html. Reason: Lack of `div` container"))]
-    LackOfContainer,
-    #[snafu(display("Fails to parse html. Reason: Lack of children from the `div` container"))]
-    LackOfChildren,
-    #[snafu(display("Fails to parse html. Reason: Lack of `src` from the `div` element"))]
-    LackOfSrc,
-    #[snafu(display("Fails to parse html. Reason: `src` string is not utf8 compatiable"))]
-    Utf8Incompatiable,
-    #[snafu(display("Downloaded Html file can not be turned into text"))]
-    NotAText { source: reqwest::Error },
-}
 
 pub struct Files {
     pub urls: Vec<Url>,
@@ -71,7 +44,7 @@ impl Album {
     /// HTML response, and extracts the URLs of the files embedded within the page.
     ///
     pub async fn fetch_files(&self) -> Result<Files, AlbumError> {
-        let client = create_spoof_client(None).context(ClientCreationSnafu)?;
+        let client = create_spoof_client(None)?;
 
         let pb = ProgressBar::new_spinner().with_message("Downloading data...");
         pb.enable_steady_tick(Duration::from_millis(100));
@@ -80,30 +53,28 @@ impl Album {
             .get(self.url.clone())
             .send()
             .await
-            .context(RequestSnafu {
-                url: self.url.clone(),
-            })?
+            .map_err(NetworkError::DownloadRequest)?
             .error_for_status()
-            .context(ErrorCodeSnafu)?
+            .map_err(NetworkError::ErrorCode)?
             .text()
             .await
-            .context(NotATextSnafu)?;
+            .map_err(NetworkError::InvalidText)?;
 
         pb.finish_and_clear();
 
         let html =
-            tl::parse(&file, ParserOptions::default()).context(HtmlParseSnafu { html: &file })?;
+            tl::parse(&file, ParserOptions::default()).map_err(HtmlParsingError::InvalidHtml)?;
 
         let parser = html.parser();
 
         let urls = html
             .get_elements_by_class_name("imagecontainer")
             .next()
-            .context(LackOfContainerSnafu)?
+            .ok_or(HtmlParsingError::LackOfContainer)?
             .get(parser)
-            .context(LackOfNodeidSnafu)?
+            .ok_or(HtmlParsingError::LackOfNodeid)?
             .children()
-            .context(LackOfChildrenSnafu)?
+            .ok_or(HtmlParsingError::LackOfChildren)?
             .all(parser)
             .iter()
             .filter_map(|x| x.as_tag())
@@ -112,10 +83,13 @@ impl Album {
                 attrs
                     .get("src")
                     .or_else(|| attrs.get("href"))
-                    .context(LackOfSrcSnafu)
+                    .ok_or(HtmlParsingError::LackOfSrc)
             })
             .filter_map(Result::transpose)
-            .map(|x| x?.try_as_utf8_str().context(Utf8IncompatiableSnafu))
+            .map(|x| {
+                x?.try_as_utf8_str()
+                    .ok_or(HtmlParsingError::Utf8Incompatiable)
+            })
             .map(|x| x.map(|x| Url::parse(x).ok()))
             .filter(|x| x.as_ref().is_ok_and(Option::is_some))
             .filter_map(Result::transpose)

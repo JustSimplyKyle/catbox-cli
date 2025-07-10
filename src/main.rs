@@ -1,11 +1,15 @@
 pub mod album;
 pub(crate) mod authentication;
 mod cli;
+mod errors;
 pub(crate) mod network;
 pub mod user;
+pub use errors::*;
 
 use std::{
-    path::PathBuf,
+    error::Error,
+    path::Path,
+    process::ExitCode,
     sync::{Arc, LazyLock},
     time::Duration,
 };
@@ -18,14 +22,14 @@ use indicatif::{MultiProgress, ProgressBar};
 use keyring::Entry;
 use reqwest::Url;
 use tokio::sync::OnceCell;
-use user::{User, UserError};
+use user::User;
 
-fn get_username_entry() -> keyring::Result<Entry> {
-    Entry::new("catbox-cli", "username")
+fn get_username_entry() -> Result<Entry, KeyringError> {
+    Entry::new("catbox-cli", "username").map_err(KeyringError::KeyringInitilization)
 }
 
-fn get_password_entry() -> keyring::Result<Entry> {
-    Entry::new("catbox-cli", "password")
+fn get_password_entry() -> Result<Entry, KeyringError> {
+    Entry::new("catbox-cli", "password").map_err(KeyringError::KeyringInitilization)
 }
 
 pub static USER_INSTANCE: LazyLock<Arc<UserInstance>> =
@@ -49,34 +53,30 @@ impl UserInstance {
     }
 }
 
-pub async fn upload_files(paths: impl AsRef<[PathBuf]> + Send) -> color_eyre::Result<Vec<String>> {
+pub async fn upload_files<T: AsRef<Path> + Sync>(
+    paths: impl AsRef<[T]> + Send,
+) -> Result<Vec<String>, AppError> {
     let user = USER_INSTANCE.get().await?;
 
     futures_util::stream::iter(paths.as_ref())
-        .map(|x| {
-            user.upload_file(x.clone())
-                .map(move |y| Ok::<_, color_eyre::Report>((x, y?)))
-        })
+        .map(AsRef::as_ref)
+        .map(|x| user.upload_file(x).map(move |y| Ok::<_, AppError>((x, y?))))
         .buffer_unordered(5)
         .map(|x| {
             let (path, url) = x?;
-            MULTI_PROGRESS.println(format!("{}: {url}", path.display()))?;
+            MULTI_PROGRESS
+                .println(format!("{}: {url}", path.display()))
+                .map_err(AppError::MultiProgressOutputError)?;
             Ok(url)
         })
         .try_collect::<Vec<_>>()
         .await
 }
 
-pub async fn add_to_album(album: String, files: Vec<String>) -> color_eyre::Result<()> {
+pub async fn add_to_album(album: String, files: Vec<String>) -> Result<(), AppError> {
     let user = USER_INSTANCE.get().await?;
 
-    let album = {
-        if album.contains("catbox.moe") {
-            Album::new(Url::parse(&album)?)
-        } else {
-            Album::new(Url::parse(&format!("https://catbox.moe/c/{album}"))?)
-        }
-    };
+    let album = get_album(album)?;
 
     futures_util::stream::iter(files.into_iter().filter_map(|x| {
         if x.contains("files.catbox.moe") {
@@ -108,12 +108,47 @@ pub async fn add_to_album(album: String, files: Vec<String>) -> color_eyre::Resu
     .await?;
     Ok(())
 }
-/// Album Control
-#[tokio::main]
-#[allow(clippy::too_many_lines)]
-async fn main() -> color_eyre::Result<()> {
-    color_eyre::install()?;
 
+fn get_album(album: String) -> Result<Album, AppError> {
+    let album = {
+        if album.contains("catbox.moe") {
+            Album::new(
+                Url::parse(&album).map_err(|source| AppError::InvalidUrl { source, url: album })?,
+            )
+        } else {
+            let url = format!("https://catbox.moe/c/{album}");
+            Album::new(Url::parse(&url).map_err(|source| AppError::InvalidUrl { source, url })?)
+        }
+    };
+    Ok(album)
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    let Err(err) = fake_main().await else {
+        return ExitCode::SUCCESS;
+    };
+
+    let mut err: &dyn Error = &err;
+    let mut error_chain = vec![err];
+
+    while let Some(x) = err.source() {
+        error_chain.push(x);
+        err = x;
+    }
+    println!("Error: An error occured in `main`");
+    println!();
+    println!("Caused by:");
+
+    for (u, error) in error_chain.iter().enumerate() {
+        println!("{u:>4}: {error}");
+    }
+
+    ExitCode::FAILURE
+}
+
+#[allow(clippy::too_many_lines)]
+async fn fake_main() -> Result<(), AppError> {
     let cli: Cli = argh::from_env();
 
     match cli.command {
@@ -151,14 +186,7 @@ async fn main() -> color_eyre::Result<()> {
         CliSubCommands::Album(AlbumCommand {
             command: AlbumSubCommands::List(AlbumList { album: Some(album) }),
         }) => {
-            let album = {
-                if album.contains("catbox.moe") {
-                    Album::new(Url::parse(&album)?)
-                } else {
-                    Album::new(Url::parse(&format!("https://catbox.moe/c/{album}"))?)
-                }
-            };
-
+            let album = get_album(album)?;
             let files = album.fetch_files().await?.urls;
 
             if cli.json {
@@ -188,14 +216,22 @@ async fn main() -> color_eyre::Result<()> {
         CliSubCommands::Config(ConfigCommand {
             command: ConfigSubCommands::Save(SaveConfig { username, password }),
         }) => {
-            get_username_entry()?.set_password(&username)?;
-            get_password_entry()?.set_password(&password)?;
+            get_username_entry()?
+                .set_password(&username)
+                .map_err(AppError::FailureSettingVariable)?;
+            get_password_entry()?
+                .set_password(&password)
+                .map_err(AppError::FailureSettingVariable)?;
         }
         CliSubCommands::Config(ConfigCommand {
             command: ConfigSubCommands::Delete(DeleteConfig {}),
         }) => {
-            get_username_entry()?.delete_credential()?;
-            get_password_entry()?.delete_credential()?;
+            get_username_entry()?
+                .delete_credential()
+                .map_err(AppError::FailureSettingVariable)?;
+            get_password_entry()?
+                .delete_credential()
+                .map_err(AppError::FailureSettingVariable)?;
         }
     }
 

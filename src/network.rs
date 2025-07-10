@@ -1,3 +1,4 @@
+use super::errors::*;
 use reqwest::{Client, ClientBuilder};
 use std::sync::Arc;
 
@@ -8,7 +9,7 @@ use reqwest::{
 
 pub fn create_spoof_client(
     cookie_provider: impl Into<Option<Arc<cookie::Jar>>>,
-) -> Result<Client, reqwest::Error> {
+) -> Result<Client, NetworkError> {
     let headers = header::HeaderMap::from_iter([
             (
                 header::USER_AGENT,
@@ -38,4 +39,5 @@ pub fn create_spoof_client(
         .default_headers(headers)
         .cookie_store(true)
         .build()
+        .map_err(NetworkError::ClientCreation)
 }
