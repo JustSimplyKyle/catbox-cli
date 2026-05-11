@@ -23,7 +23,7 @@ error_set! {
     }|| AlbumError || UserError;
 
     AlbumError = HtmlParsingError || NetworkError;
-    UserError = InnerUserError || NetworkError || KeyringError || HtmlParsingError;
+    UserError = InnerUserError || NetworkError || KeyringError || HtmlParsingError || UploadFileError;
 
     HtmlParsingError = {
         #[display("Fails to parse html.")]
@@ -73,10 +73,15 @@ error_set! {
         InvalidSlug { slug: String },
         #[display("Fails to parse a short from url: {url}")]
         ShortParsing { url: Url },
+    };
+
+    UploadFileError = {
         #[display("Fails to read file `{}`", file.display())]
         ReadFile(std::io::Error) { file: PathBuf },
         #[display("Request returns non 200 error code: '{code}'.{}", ("\nReason: ".to_string() + reason))]
         InvalidResponseWithCode { code: reqwest::StatusCode, reason: String },
-    };
+        #[display("Failed to determine filename for upload")]
+        InvalidFilename
+    } || NetworkError;
 
 }

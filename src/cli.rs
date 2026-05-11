@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use argh::FromArgs;
 
+use crate::upload::LitterExpiry;
+
 #[derive(FromArgs, PartialEq, Eq, Debug, Clone)]
 /// Top-level command.
 pub struct Cli {
@@ -79,6 +81,15 @@ pub struct FileList {}
 /// Uploading files.
 #[argh(subcommand, name = "upload")]
 pub struct FileUpload {
+    #[argh(switch)]
+    /// upload files using Litterbox temporary hosting instead of Catbox.
+    pub use_litterbox: bool,
+    #[argh(option)]
+    /// expiration time for Litterbox uploads
+    /// Supported Values: [1h, 12h, 24h, 72h]
+    ///
+    /// If not provided defaults to `1h`
+    pub expiry: Option<LitterExpiry>,
     #[argh(positional)]
     /// file paths
     pub paths: Vec<PathBuf>,

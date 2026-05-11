@@ -3,6 +3,7 @@ pub(crate) mod authentication;
 mod cli;
 mod errors;
 pub(crate) mod network;
+pub mod upload;
 pub mod user;
 pub use errors::*;
 
@@ -23,6 +24,8 @@ use keyring::Entry;
 use reqwest::Url;
 use tokio::sync::OnceCell;
 use user::User;
+
+use crate::upload::{upload_temp_file, LitterExpiry};
 
 fn get_username_entry() -> Result<Entry, KeyringError> {
     Entry::new("catbox-cli", "username").map_err(KeyringError::KeyringInitilization)
@@ -61,6 +64,25 @@ pub async fn upload_files<T: AsRef<Path> + Sync>(
     futures_util::stream::iter(paths.as_ref())
         .map(AsRef::as_ref)
         .map(|x| user.upload_file(x).map(move |y| Ok::<_, AppError>((x, y?))))
+        .buffer_unordered(5)
+        .map(|x| {
+            let (path, url) = x?;
+            MULTI_PROGRESS
+                .println(format!("{}: {url}", path.display()))
+                .map_err(AppError::MultiProgressOutputError)?;
+            Ok(url)
+        })
+        .try_collect::<Vec<_>>()
+        .await
+}
+
+pub async fn upload_temp_files<T: AsRef<Path> + Sync>(
+    paths: impl AsRef<[T]> + Send,
+    expiry: LitterExpiry,
+) -> Result<Vec<String>, AppError> {
+    futures_util::stream::iter(paths.as_ref())
+        .map(AsRef::as_ref)
+        .map(|x| upload_temp_file(x, expiry).map(move |y| Ok::<_, AppError>((x, y?))))
         .buffer_unordered(5)
         .map(|x| {
             let (path, url) = x?;
@@ -153,9 +175,18 @@ async fn fake_main() -> Result<(), AppError> {
 
     match cli.command {
         CliSubCommands::File(FileCommand {
-            command: FileSubCommands::Upload(FileUpload { paths }),
+            command:
+                FileSubCommands::Upload(FileUpload {
+                    paths,
+                    use_litterbox,
+                    expiry,
+                }),
         }) => {
-            upload_files(paths).await?;
+            if use_litterbox {
+                upload_temp_files(paths, expiry.unwrap_or(LitterExpiry::OneHour)).await?;
+            } else {
+                upload_files(paths).await?;
+            }
         }
         CliSubCommands::File(FileCommand {
             command: FileSubCommands::List(FileList {}),

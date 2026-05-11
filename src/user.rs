@@ -1,19 +1,16 @@
-use indicatif::{ProgressBar, ProgressStyle};
-use reqwest::{
-    multipart::{self, Part},
-    Body, Url,
-};
+use indicatif::ProgressBar;
+use reqwest::Url;
 
-use futures_util::TryStreamExt;
 use std::{path::Path, time::Duration};
-use tokio::{fs::File, sync::OnceCell};
+use tokio::sync::OnceCell;
 
 use tl::ParserOptions;
-use tokio_util::codec::{BytesCodec, FramedRead};
 
 use crate::{
-    album::Album, authentication::AuthenticatedClient, ensure, get_password_entry,
-    get_username_entry, MULTI_PROGRESS,
+    album::Album,
+    authentication::AuthenticatedClient,
+    ensure, get_password_entry, get_username_entry,
+    upload::{upload_file, UploadTarget},
 };
 
 use crate::errors::*;
@@ -24,7 +21,7 @@ pub struct User {
     user_hash: OnceCell<String>,
 }
 
-const API_URL: &str = "https://catbox.moe/user/api.php";
+pub const API_URL: &str = "https://catbox.moe/user/api.php";
 
 impl User {
     /// Creates a new `User` instance.
@@ -75,76 +72,12 @@ impl User {
     ///
     /// Panics when the template provided to `ProgressBar` is invalid(compile time mistake)
     pub async fn upload_file(&self, path: impl AsRef<Path> + Send) -> Result<String, UserError> {
-        let path = path.as_ref();
-
-        let file = File::open(path)
+        let target = UploadTarget::Catbox {
+            user_hash: self.get_user_hash().await?,
+        };
+        upload_file(path, target, &self.client)
             .await
-            .map_err(|source| UserError::ReadFile {
-                file: path.to_path_buf(),
-                source,
-            })?;
-
-        let total_bytes = file
-            .metadata()
-            .await
-            .map_err(|source| UserError::ReadFile {
-                file: path.to_path_buf(),
-                source,
-            })?
-            .len();
-
-        let bar = ProgressBar::new(total_bytes).with_prefix(path.to_string_lossy().to_string());
-
-        bar.set_style(
-            #[allow(clippy::literal_string_with_formatting_args)]
-            ProgressStyle::with_template(
-                "{prefix:.magenta}\n[ETA: {eta}] [{decimal_bytes_per_sec:}] [{elapsed_precise}] {wide_bar:.cyan/blue} {decimal_bytes}/{decimal_total_bytes}",
-            )
-            .expect("Invalid template(compile time issue)")
-            .progress_chars("##-"),
-        );
-
-        MULTI_PROGRESS.add(bar.clone());
-
-        bar.enable_steady_tick(Duration::from_millis(500));
-
-        let bar_cloned = bar.clone();
-
-        let stream = FramedRead::new(file, BytesCodec::new()).inspect_ok(move |x| {
-            bar_cloned.inc(x.len() as u64);
-        });
-
-        let body_stream = Body::wrap_stream(stream);
-
-        let hash = self.get_user_hash().await?;
-
-        let form = multipart::Form::new()
-            .text("reqtype", "fileupload")
-            .text("userhash", hash)
-            .part(
-                "fileToUpload",
-                Part::stream_with_length(body_stream, total_bytes)
-                    .file_name(path.to_string_lossy().to_string()),
-            );
-
-        let resp = self
-            .client
-            .post(API_URL)
-            .multipart(form)
-            .send()
-            .await
-            .map_err(NetworkError::DownloadRequest)?;
-
-        let code = resp.status();
-
-        let text = resp.text().await.map_err(NetworkError::InvalidText)?;
-
-        if !code.is_success() {
-            return Err(UserError::InvalidResponseWithCode { code, reason: text });
-        }
-
-        bar.finish_and_clear();
-        Ok(text)
+            .map_err(Into::into)
     }
 
     pub async fn upload_to_album(&self, album: &Album, slug: &str) -> Result<(), UserError> {
